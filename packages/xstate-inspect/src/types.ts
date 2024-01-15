@@ -24,11 +24,9 @@ export interface InspectorOptions {
 }
 
 export interface WsInspectorOptions {
-  url?: string;
-  iframe?: MaybeLazy<HTMLIFrameElement | null | false>;
+  wsUrl?: string;
   devTools?: MaybeLazy<XStateDevInterface>;
   serialize?: Replacer | undefined;
-  targetWindow?: Window | undefined | null;
 }
 
 export interface Inspector {

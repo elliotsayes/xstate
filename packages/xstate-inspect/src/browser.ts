@@ -236,22 +236,29 @@ export function inspect(options?: InspectorOptions): Inspector | undefined {
   };
 }
 
+const defaultWsInspectorOptions = {
+  wsUrl: 'ws://localhost:8080',
+  devTools: () => {
+    const devTools = createDevTools();
+    (globalThis as any).__xstate__ = devTools;
+    return devTools;
+  },
+  serialize: undefined
+};
+
+const getFinalWsOptions = (options?: Partial<WsInspectorOptions>) => {
+  const withDefaults = { ...defaultWsInspectorOptions, ...options };
+  return {
+    ...withDefaults,
+    wsUrl: new URL(withDefaults.wsUrl),
+    devTools: getLazy(withDefaults.devTools)
+  };
+};
+
 export function inspectWs(options?: WsInspectorOptions): Inspector | undefined {
-  const finalOptions = getFinalOptions(options);
-  const { iframe, url, devTools } = finalOptions;
-
-  if (options?.targetWindow === null) {
-    throw new Error('Received a nullable `targetWindow`.');
-  }
-  let targetWindow: Window | null | undefined = finalOptions.targetWindow;
-
-  if (iframe === null && !targetWindow) {
-    console.warn(
-      'No suitable <iframe> found to embed the inspector. Please pass an <iframe> element to `inspect(iframe)` or create an <iframe data-xstate></iframe> element.'
-    );
-
-    return undefined;
-  }
+  const finalOptions = getFinalWsOptions(options);
+  const { wsUrl, devTools } = finalOptions;
+  const wsClient = new WebSocket(wsUrl);
 
   const inspectMachine = createInspectMachine(devTools, options);
   const inspectService = createActor(inspectMachine).start();
@@ -269,14 +276,10 @@ export function inspectWs(options?: WsInspectorOptions): Inspector | undefined {
       event.data !== null &&
       'type' in event.data
     ) {
-      if (iframe && !targetWindow) {
-        targetWindow = iframe.contentWindow;
-      }
-
       if (!client) {
         client = {
           send: (e: any) => {
-            targetWindow!.postMessage(e, url.origin);
+            wsClient!.send(stringify(e, options?.serialize));
           }
         };
       }
@@ -347,16 +350,6 @@ export function inspectWs(options?: WsInspectorOptions): Inspector | undefined {
       }
     });
   });
-
-  if (iframe) {
-    iframe.addEventListener('load', () => {
-      targetWindow = iframe.contentWindow!;
-    });
-
-    iframe.setAttribute('src', String(url));
-  } else if (!targetWindow) {
-    targetWindow = window.open(String(url), 'xstateinspector');
-  }
 
   return {
     name: '@@xstate/inspector',
