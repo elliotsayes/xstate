@@ -1,0 +1,16 @@
+{
+  "name": "xstate-inspect-ws-proxy",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "author": "Elliot Sayes",
+  "license": "MIT",
+  "scripts": {
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2"
+  }
+}
