@@ -23,6 +23,14 @@ export interface InspectorOptions {
   targetWindow?: Window | undefined | null;
 }
 
+export interface WsInspectorOptions {
+  url?: string;
+  iframe?: MaybeLazy<HTMLIFrameElement | null | false>;
+  devTools?: MaybeLazy<XStateDevInterface>;
+  serialize?: Replacer | undefined;
+  targetWindow?: Window | undefined | null;
+}
+
 export interface Inspector {
   name: '@@xstate/inspector';
   send: (event: InspectMachineEvent) => void;

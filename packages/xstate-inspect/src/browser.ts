@@ -12,6 +12,7 @@ import { stringifyState } from './serialize.ts';
 import type {
   Inspector,
   InspectorOptions,
+  WsInspectorOptions,
   InspectReceiver,
   ParsedReceiverEvent,
   ReceiverCommand,
@@ -89,6 +90,153 @@ const getFinalOptions = (options?: Partial<InspectorOptions>) => {
 const patchedInterpreters = new Set<AnyActor>();
 
 export function inspect(options?: InspectorOptions): Inspector | undefined {
+  const finalOptions = getFinalOptions(options);
+  const { iframe, url, devTools } = finalOptions;
+
+  if (options?.targetWindow === null) {
+    throw new Error('Received a nullable `targetWindow`.');
+  }
+  let targetWindow: Window | null | undefined = finalOptions.targetWindow;
+
+  if (iframe === null && !targetWindow) {
+    console.warn(
+      'No suitable <iframe> found to embed the inspector. Please pass an <iframe> element to `inspect(iframe)` or create an <iframe data-xstate></iframe> element.'
+    );
+
+    return undefined;
+  }
+
+  const inspectMachine = createInspectMachine(devTools, options);
+  const inspectService = createActor(inspectMachine).start();
+  const listeners = new Set<Observer<any>>();
+
+  const sub = inspectService.subscribe((state) => {
+    listeners.forEach((listener) => listener.next?.(state));
+  });
+
+  let client: Pick<ActorRef<any, any>, 'send'>;
+
+  const messageHandler = (event: MessageEvent<unknown>) => {
+    if (
+      typeof event.data === 'object' &&
+      event.data !== null &&
+      'type' in event.data
+    ) {
+      if (iframe && !targetWindow) {
+        targetWindow = iframe.contentWindow;
+      }
+
+      if (!client) {
+        client = {
+          send: (e: any) => {
+            targetWindow!.postMessage(e, url.origin);
+          }
+        };
+      }
+
+      const inspectEvent = {
+        ...(event.data as InspectMachineEvent),
+        client
+      };
+
+      inspectService.send(inspectEvent);
+    }
+  };
+
+  window.addEventListener('message', messageHandler);
+
+  window.addEventListener('unload', () => {
+    inspectService.send({ type: 'unload' });
+  });
+
+  const stringifyWithSerializer = (value: any) =>
+    stringify(value, options?.serialize);
+
+  devTools.onRegister((service) => {
+    const state = service.getSnapshot();
+    inspectService.send({
+      type: 'service.register',
+      machine: stringify(service.logic, options?.serialize),
+      state: stringifyState(state, options?.serialize),
+      sessionId: service.sessionId,
+      id: service.id,
+      parent: (service._parent as AnyActor)?.sessionId
+    });
+
+    if (!patchedInterpreters.has(service)) {
+      patchedInterpreters.add(service);
+
+      // monkey-patch service.send so that we know when an event was sent
+      // to a service *before* it is processed, since other events might occur
+      // while the sent one is being processed, which throws the order off
+      const originalSend = service.send.bind(service);
+
+      service.send = function inspectSend(event: EventObject) {
+        inspectService.send({
+          type: 'service.event',
+          event: stringifyWithSerializer(event),
+          sessionId: service.sessionId
+        });
+
+        return originalSend(event);
+      };
+    }
+
+    service.subscribe((state) => {
+      inspectService.send({
+        type: 'service.state',
+        // TODO: investigate usage of structuredClone in browsers if available
+        state: stringifyState(state, options?.serialize),
+        sessionId: service.sessionId
+      });
+    });
+
+    service.subscribe({
+      complete() {
+        inspectService.send({
+          type: 'service.stop',
+          sessionId: service.sessionId
+        });
+      }
+    });
+  });
+
+  if (iframe) {
+    iframe.addEventListener('load', () => {
+      targetWindow = iframe.contentWindow!;
+    });
+
+    iframe.setAttribute('src', String(url));
+  } else if (!targetWindow) {
+    targetWindow = window.open(String(url), 'xstateinspector');
+  }
+
+  return {
+    name: '@@xstate/inspector',
+    send: (event) => {
+      inspectService.send(event);
+    },
+    subscribe: (next, onError, onComplete) => {
+      const observer = toObserver(next, onError, onComplete);
+
+      listeners.add(observer);
+      observer.next?.(inspectService.getSnapshot());
+
+      return {
+        unsubscribe: () => {
+          listeners.delete(observer);
+        }
+      };
+    },
+    disconnect: () => {
+      inspectService.send({ type: 'disconnect' });
+      window.removeEventListener('message', messageHandler);
+      sub.unsubscribe();
+    }
+  };
+}
+
+export function inspectWs(options?: WsInspectorOptions): Inspector | undefined {
   const finalOptions = getFinalOptions(options);
   const { iframe, url, devTools } = finalOptions;
 

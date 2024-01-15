@@ -1,5 +1,6 @@
 export {
   inspect,
+  inspectWs,
   createWindowReceiver,
   createWebSocketReceiver,
   createDevTools
